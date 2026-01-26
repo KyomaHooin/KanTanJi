@@ -5,6 +5,7 @@ VERB_TRANSITIVENESS_COLOR = "#28835F"
 VERB_IGIDAN_GODAN_COLOR = "#658B18"
 VERB_SURU_COLOR = "#4A90E2"
 VERB_IRREGULAR_COLOR = "#E65563"
+NOUN_COLOR = "#0967A4"
 
 def get_smart_label(title: str, details: str, color="#d73a49"):
     return f"""
@@ -48,6 +49,8 @@ def vocab_property_html(prop: str | Value, color: str):
             return get_smart_label("する sloveso","Nepravidelná slovesa se chovají podobně dle する tvaru.", color)
         case "fukisokuna":
             return get_smart_label("nepravidelné čtení","Čtení nelze odvodit ze zápisu kanji.", color)
+        case "meishi":
+            return get_smart_label("podst. jméno", "Podstatná jména tvoří drtivou většinu japonštiny, label je ukazován jen u slovíček, kde to nemusí být zřejmé.", color)
     raise ValueError(f"Property not allowed: {prop}")
 
 
@@ -63,6 +66,8 @@ def vocab_property_color(prop: str | Value):
             return VERB_SURU_COLOR
         case "fukisokuna":
             return VERB_IRREGULAR_COLOR
+        case "meishi":
+            return NOUN_COLOR
     raise ValueError(f"Property not allowed: {prop}")
 
 

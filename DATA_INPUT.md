@@ -45,6 +45,7 @@ Dependening on the keys mentioned above, the row also can or must define other k
      - ``na``  - na-adjective
      - `i`  - i-adjective 
      - `fukisokuna` - irregular reading
+     - `meishi` - noun, usually not specified except when it is not obvious the vocabulary is noun, too
 
 You can also define arbitrary key-value pairs you wish, these will be included in 'other', 'notes' etc. sections.
 
