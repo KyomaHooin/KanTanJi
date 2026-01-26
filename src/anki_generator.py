@@ -8,7 +8,7 @@ import markdown
 import json
 import os
 
-from utils import generate_furigana, retrieve_row_kanjialive_url, sanitize_filename, create_dataset_readme
+from utils import generate_furigana, sanitize_filename, create_dataset_readme
 from utils_data_entitites import InputFormat
 from utils_html import parse_item_props_html
 
@@ -485,8 +485,6 @@ def read_kanji_csv(key, data):
         if onyomi and kunyomi:
             onyomi += "&emsp;&emsp;"
 
-        kanji_alive = retrieve_row_kanjialive_url(item)
-
         # ---------------------------------------------------------------------
         # KANJI CARDS:
         # - cards[]: first in order => draw WITH hints (outline)
@@ -498,7 +496,6 @@ def read_kanji_csv(key, data):
         hw_recall_result = _hanziwriter_widget_html(item['kanji'], show_outline=False, kind='result')
 
         cards.append([
-            f"<a class=\"a\" href=\"{kanji_alive}\">{item['kanji']} KanjiAlive</a>"
             f"<div style=\"font-size: 32pt;\">{item['kanji']}</div>"
             f"{hw_outline}",
 
@@ -511,7 +508,6 @@ def read_kanji_csv(key, data):
 
         # Translation to kanji card (recall / no outline)
         cards_translation.append([
-            f"<a class=\"a\" href=\"{kanji_alive}\">{item['kanji']} KanjiAlive</a>"
             f"<div style=\"font-size: 26pt;\">{item['imi']}</div>"
             f"<div>{onyomi + kunyomi}</div>"
             f"{hw_recall}",
