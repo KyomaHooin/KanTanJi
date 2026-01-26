@@ -33,7 +33,6 @@ except Exception:
 HANZIWRITER_LIB_INLINE = f"<script>{_HW_LIB_CODE}</script>" if _HW_LIB_CODE else ""
 
 
-
 def _escape_json_for_html_script(text: str) -> str:
     """
     Safely embed JSON inside <script type="application/json">...</script>.
@@ -84,17 +83,12 @@ def _hanziwriter_widget_html(ch: str, show_outline: bool, kind: str) -> str:
     # kind == 'result'
     return f"""
 <div class="hw hw-result" data-hw-char="{ch}" data-hw-outline="{outline}">
-  <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
-    <div>
-      <div class="hw-grid"><div class="hw-user"></div></div>
-      <div style="margin-top:6px;font-size:9pt;color:gray;">Tvá kresba</div>
-    </div>
-    <div>
-      <div class="hw-grid"><div class="hw-correct"></div></div>
-      <div style="margin-top:6px;font-size:9pt;color:gray;">Správně</div>
-    </div>
+  <div class="hw-grid hw-composite">
+    <div class="hw-correct"></div>
+    <div class="hw-user"></div>
   </div>
   <div class="hw-status" style="margin-top:8px;"></div>
+  <div style="margin-top:6px;font-size:9pt;color:gray;">Správně</div>
   <script type="application/json" class="hw-data">{data_json}</script>
 </div>
 """
@@ -162,15 +156,16 @@ css = """
 
 /* Make user drawing thicker (SVG paths) */
 .hw svg path {
+  stroke-width: 28px !important;         /* tune: 20–45 */
   stroke-linecap: round !important;
   stroke-linejoin: round !important;
+  vector-effect: non-scaling-stroke;     /* important if SVG gets scaled */
 }
-/* Try to thicken drawn strokes without over-thickening outlines */
-.hw svg path[fill="none"] {
-  stroke-width: 10px !important;
+.hw .hw-user svg path {
+  stroke-width: 15px !important;
 }
 .hw-target svg path {
-  stroke-width: 10px !important;
+  stroke-width: 14px !important;
   stroke-linecap: round !important;
   stroke-linejoin: round !important;
 }
@@ -187,8 +182,15 @@ css = """
 .hw-glyph { width:240px; height:240px; display:flex; align-items:center; justify-content:center; }
 .hw-glyph-char { font-size: 160px; line-height: 1; color: #f2f2f2; font-family: 'Hiragino Mincho ProN','Yu Mincho','MS Mincho',serif; }
 
-/* Make user drawing thicker (quiz side) */
-.hw-quiz svg path { stroke-width: 24px !important; }
+/* Composite result overlay: red correct underneath, user drawing on top */
+.hw-composite { position: relative; }
+.hw-composite .hw-correct,
+.hw-composite .hw-user {
+  position: absolute;
+  inset: 0;
+}
+.hw-composite .hw-correct { opacity: 1; }
+.hw-composite .hw-user { pointer-events: none; } /* don't block taps */
 """
 
 # Global init for HanziWriter inside Anki card HTML.
@@ -229,12 +231,12 @@ HANZIWRITER_INIT_JS = r"""
       // Unique target id
       var tid = 'hw-target-' + idx + '-' + Math.floor(Math.random() * 1e9);
       target.setAttribute('id', tid);
-      
+
       function parseRgb(rgb) {
         const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
         return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
       }
-    
+
       function isDarkBg() {
         const bg = getComputedStyle(document.body).backgroundColor || "";
         const rgb = parseRgb(bg);
@@ -244,9 +246,9 @@ HANZIWRITER_INIT_JS = r"""
         const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
         return lum < 0.5;
       }
-    
+
       const dark = isDarkBg();
-    
+
       const palette = dark ? {
         strokeColor:  "#f2f2f2",
         outlineColor: "rgba(255,255,255,0.22)",
@@ -268,8 +270,6 @@ HANZIWRITER_INIT_JS = r"""
         padding: 10,
         showCharacter: false,
         showOutline: outline,
-        // colors for dark background
-        strokeColor: '#f2f2f2',
         // offline stroke data
         charDataLoader: function() { return charData; }
       });
@@ -286,6 +286,7 @@ HANZIWRITER_INIT_JS = r"""
         showOutline: outline,
         showCharacter: false,
         highlightOnComplete: true,
+        showHintAfterMisses: 1,
         onMistake: function(strokeData) {
           mistakes = strokeData && typeof strokeData.totalMistakes === 'number'
             ? strokeData.totalMistakes
@@ -321,7 +322,7 @@ HANZIWRITER_INIT_JS = r"""
     });
   }
 
-  function renderUserSvg(paths) {
+  function renderUserSvg(paths, strokeColor) {
     // Best-effort render of user drawn paths.
     // HanziWriter may output either 1024-space or already-scaled coords; infer a sensible viewBox.
     function inferBoxSize(ps) {
@@ -341,14 +342,17 @@ HANZIWRITER_INIT_JS = r"""
     }
 
     var box = inferBoxSize(paths);
+    var color = strokeColor || "#f2f2f2";
+
     var p = (paths || []).map(function(d) {
-      return '<path d="' + d.replace(/"/g,'&quot;') + '" fill="none" stroke="#f2f2f2" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>';
+    return '<path d="' + d.replace(/"/g,'&quot;') + '" fill="none" stroke="' + color +
+      '" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>';
     }).join('');
 
     return (
-      '<svg viewBox="0 0 ' + box + ' ' + box + '" width="240" height="240" style="display:block;margin:auto">' +
-        p +
-      '</svg>'
+    '<svg viewBox="0 0 ' + box + ' ' + box + '" width="240" height="240" style="display:block;margin:auto">' +
+      p +
+    '</svg>'
     );
   }
 
@@ -363,7 +367,15 @@ HANZIWRITER_INIT_JS = r"""
       document.querySelectorAll('.qa + br + br').forEach(function(el){ el.style.display='none'; });
     } catch(e) {}
 
-    blocks.forEach(function(block, idx) {
+    // Keep only a single result canvas (first one), remove any duplicates
+    var block = blocks[0];
+    for (var i = 1; i < blocks.length; i++) {
+      try { blocks[i].remove(); } catch(e) {}
+    }
+    var idx = 0;
+
+    // (single block)
+    (function(block, idx) {
       if (block.dataset.hwInited === '1') return;
       block.dataset.hwInited = '1';
 
@@ -384,20 +396,59 @@ HANZIWRITER_INIT_JS = r"""
       var totalMistakes = saved && typeof saved.totalMistakes === 'number' ? saved.totalMistakes : null;
       status.textContent = totalMistakes === null ? 'Počet chyb neznámý.' : ('Výsledek ✓  Chyb: ' + totalMistakes);
 
-      // Render user's drawing (preferred over showing the kanji itself)
-      if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
-        userEl.innerHTML = renderUserSvg(saved.drawn);
-      } else {
-        userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
-      }
+      function parseRgb(rgb) {
+  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
+}
+function isDarkBg() {
+  const bg = getComputedStyle(document.body).backgroundColor || "";
+  const rgb = parseRgb(bg);
+  if (!rgb) return false;
+  const [r,g,b] = rgb;
+  const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+  return lum < 0.5;
+}
+const dark = isDarkBg();
+const palette = dark ? {
+  userInk: "#f2f2f2",
+  correctRed: "rgb(255, 80, 80)"
+} : {
+  userInk: "#111111",
+  correctRed: "rgb(200, 0, 0)"
+};
 
-      // Render correct output (nice glyph)
-      // Prefer showing the actual kanji as a clean glyph (not stroke paths).
-      correctEl.innerHTML =
-        '<div class="hw-glyph" aria-label="Správně">' +
-          '<span class="hw-glyph-char">' + ch + '</span>' +
-        '</div>';
+// --- render user drawing on top ---
+if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
+  userEl.innerHTML = renderUserSvg(saved.drawn, palette.userInk);
+} else {
+  userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
+}
+
+// --- render correct kanji underneath in red low opacity ---
+var cid = 'hw-correct-' + idx + '-' + Math.floor(Math.random() * 1e9);
+correctEl.setAttribute('id', cid);
+correctEl.innerHTML = ''; // ensure empty
+
+try {
+// Fallback for HanziWriter builds that don't expose renderCharacter()
+    var w = HanziWriter.create(cid, ch, {
+      width: 240,
+      height: 240,
+      padding: 10,
+      showOutline: false,
+      showCharacter: true,
+      strokeColor: palette.correctRed,
+      outlineColor: 'rgba(0,0,0,0)',
+      drawingColor: 'rgba(0,0,0,0)',
+      highlightColor: 'rgba(0,0,0,0)',
+      renderUserSvg: 80,
+      charDataLoader: function() { return charData; }
     });
+    if (w && typeof w.showCharacter === 'function') w.showCharacter();
+} catch(e) {
+  correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>';
+}
+    })(block, idx);
   }
 
   function initAll() {
@@ -429,14 +480,14 @@ kantanji_model = genanki.Model(
         {
             'name': 'Card 1',
             'qfmt': (
-                "<div class='c'>{{Q}}</div>"
-                "<script>['click','touchstart'].forEach(event=>document.addEventListener(event,()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
-                + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
+                    "<div class='c'>{{Q}}</div>"
+                    "<script>['click','touchstart'].forEach(event=>document.addEventListener(event,()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
+                    + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
             ),
             'afmt': (
-                "<div id='hw-back-marker' style='display:none'></div><div class='c qa'>{{Q}}</div><br><br><div class='c'>{{A}}</div>"
-                "<script>['click','touchstart'].forEach(event=>document.addEventListener(event, ()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
-                + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
+                    "<div id='hw-back-marker' style='display:none'></div><div class='c qa'>{{Q}}</div><br><br><div class='c'>{{A}}</div>"
+                    "<script>['click','touchstart'].forEach(event=>document.addEventListener(event, ()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
+                    + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
             ),
         },
     ],
@@ -562,7 +613,7 @@ def read_kanji_csv(key, data):
                 f"<div class=\"rlbl\">{props_html}</div>"
                 f"<div style=\"font-size: 26pt;\">{vocab_item['imi']}</div>{usage_lines}",
 
-                vocab_item["guid"], name, "tango",  vocab_significance
+                vocab_item["guid"], name, "tango", vocab_significance
             ])
 
             # Translation to word card
