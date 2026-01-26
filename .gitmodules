@@ -1,0 +1,3 @@
+[submodule "assets/hanzi-writer-data-ja"]
+	path = assets/hanzi-writer-data-ja
+	url = https://github.com/mnako/hanzi-writer-data-ja.git

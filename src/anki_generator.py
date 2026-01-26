@@ -5,10 +5,99 @@ import genanki
 import hashlib
 import uuid
 import markdown
+import json
+import os
 
 from utils import generate_furigana, retrieve_row_kanjialive_url, sanitize_filename, create_dataset_readme
 from utils_data_entitites import InputFormat
 from utils_html import parse_item_props_html
+
+# -----------------------------------------------------------------------------
+# HanziWriter (offline) integration for Japanese kanji stroke order practice
+#
+# This generator expects:
+# 1) HanziWriter library file (vendored, no CDN): assets/hanziwriter/hanziwriter.min.js
+# 2) Japanese stroke data files in HanziWriter JSON format (vendored):
+#    assets/hanziwriter-data-ja/<KANJI>.json
+#
+# Recommended source for (2): mnako/hanzi-writer-data-ja (AnimCJK -> HanziWriter format)
+# -----------------------------------------------------------------------------
+
+HANZIWRITER_LIB_PATH = Path(os.environ.get("KANTANJI_HANZIWRITER_LIB", "assets/hanziwriter.min.js"))
+HANZIWRITER_DATA_JA_DIR = Path(os.environ.get("KANTANJI_HANZI_DATA_JA", "assets/hanzi-writer-data-ja/data"))
+# Inline the HanziWriter library into the card templates (Anki often won't load .js via <script src>)
+try:
+    _HW_LIB_CODE = HANZIWRITER_LIB_PATH.read_text(encoding="utf-8")
+except Exception:
+    _HW_LIB_CODE = ""
+HANZIWRITER_LIB_INLINE = f"<script>{_HW_LIB_CODE}</script>" if _HW_LIB_CODE else ""
+
+
+
+def _escape_json_for_html_script(text: str) -> str:
+    """
+    Safely embed JSON inside <script type="application/json">...</script>.
+    The main pitfall is a literal '</script>' sequence.
+    """
+    return text.replace("</", "<\\/")
+
+
+def _load_kanji_char_data_ja(ch: str) -> str:
+    """
+    Load Japanese kanji stroke data (HanziWriter JSON format) and return it as a JSON string.
+    If missing, returns '{}' and the card will show a warning.
+    """
+    p = HANZIWRITER_DATA_JA_DIR / f"{ch}.json"
+    if not p.exists():
+        # Keep it non-fatal; user might still want to export the deck.
+        print(f"W: Missing HanziWriter JA data for '{ch}' at: {p}")
+        return "{}"
+    return p.read_text(encoding="utf-8")
+
+
+def _hanziwriter_widget_html(ch: str, show_outline: bool, kind: str) -> str:
+    """
+    Inline widget HTML for one kanji.
+
+    kind:
+      - 'quiz'   -> interactive quiz for the FRONT side only
+      - 'result' -> non-interactive result + correct output for the BACK side only
+
+    Ordering (as requested):
+      - cards[] (first) uses show_outline=True  (hint mode)
+      - cards_translation[] (second) uses show_outline=False (recall mode)
+
+    Vocabulary cards are not touched (no widget injected).
+    """
+    data_json = _escape_json_for_html_script(_load_kanji_char_data_ja(ch))
+    outline = "1" if show_outline else "0"
+
+    if kind == "quiz":
+        return f"""
+<div class="hw hw-quiz" data-hw-char="{ch}" data-hw-outline="{outline}">
+  <div class="hw-grid"><div class="hw-target"></div></div>
+  <div class="hw-status"></div>
+  <script type="application/json" class="hw-data">{data_json}</script>
+</div>
+"""
+
+    # kind == 'result'
+    return f"""
+<div class="hw hw-result" data-hw-char="{ch}" data-hw-outline="{outline}">
+  <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
+    <div>
+      <div class="hw-grid"><div class="hw-user"></div></div>
+      <div style="margin-top:6px;font-size:9pt;color:gray;">Tvá kresba</div>
+    </div>
+    <div>
+      <div class="hw-grid"><div class="hw-correct"></div></div>
+      <div style="margin-top:6px;font-size:9pt;color:gray;">Správně</div>
+    </div>
+  </div>
+  <div class="hw-status" style="margin-top:8px;"></div>
+  <script type="application/json" class="hw-data">{data_json}</script>
+</div>
+"""
 
 
 def reading_label(value):
@@ -40,6 +129,292 @@ css = """
 .o {background-color:rgba(188,188,188,0.1);color:gray!important;width: 100%;margin-top:25px;padding:5px 12px;border-radius:5px;text-align:left;}
 .g {color:gray!important}
 .u {background-color:rgba(50,50,50,0.2);border-radius:5px;padding:5px 12px;font-size:14pt;}
+
+/* HanziWriter widget */
+.hw {margin-top: 10px; width: 100%; display:flex; flex-direction:column; align-items:center;}
+.hw-target {width: 240px; height: 240px;}
+.hw-status {margin-top: 6px; font-size: 10pt; color: gray;}
+
+
+/* HanziWriter practice block */
+.hw { margin-top: 12px; }
+.hw-grid {
+  width: 260px;
+  height: 260px;
+  position: relative;
+  border: 1px dashed rgba(242,242,242,0.25);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.hw-grid::before, .hw-grid::after {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; right: 0; bottom: 0;
+  pointer-events: none;
+}
+.hw-grid::before {
+  /* center cross */
+  background:
+    linear-gradient(to right, rgba(242,242,242,0.18) 1px, transparent 1px) 50% 0 / 2px 100% no-repeat,
+    linear-gradient(to bottom, rgba(242,242,242,0.18) 1px, transparent 1px) 0 50% / 100% 2px no-repeat;
+}
+.hw-target { width: 100%; height: 100%; }
+
+/* Make user drawing thicker (SVG paths) */
+.hw svg path {
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+/* Try to thicken drawn strokes without over-thickening outlines */
+.hw svg path[fill="none"] {
+  stroke-width: 10px !important;
+}
+.hw-target svg path {
+  stroke-width: 10px !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+/* HanziWriter practice styling */
+.hw { margin-top: 14px; }
+.hw-grid { position: relative; width: 240px; height: 240px; margin: 0 auto; border: 2px dashed rgba(242,242,242,0.18); border-radius: 10px; }
+.hw-grid:before, .hw-grid:after { content: ""; position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: rgba(242,242,242,0.10); transform: translateX(-0.5px); }
+.hw-grid:after { left: 0; top: 50%; width: 100%; height: 1px; transform: translateY(-0.5px); }
+.hw-target { position:absolute; inset:0; }
+.hw-status { margin-top: 8px; font-size: 10pt; color: gray; }
+.hw-panels { display:flex; gap: 22px; justify-content:center; margin-top: 14px; flex-wrap: wrap; }
+.hw-panel-label { font-size: 9pt; color: gray; margin-top: 6px; }
+.hw-glyph { width:240px; height:240px; display:flex; align-items:center; justify-content:center; }
+.hw-glyph-char { font-size: 160px; line-height: 1; color: #f2f2f2; font-family: 'Hiragino Mincho ProN','Yu Mincho','MS Mincho',serif; }
+
+/* Make user drawing thicker (quiz side) */
+.hw-quiz svg path { stroke-width: 24px !important; }
+"""
+
+# Global init for HanziWriter inside Anki card HTML.
+# Works for kanji cards only (cards that include .hw blocks).
+# Vocabulary cards are unchanged and don't include .hw, so they won't run any drawing logic.
+HANZIWRITER_INIT_JS = r"""
+<script>
+(function() {
+  function safeJsonParse(txt) {
+    try { return JSON.parse(txt || '{}'); } catch(e) { return {}; }
+  }
+
+  function isBackSide() {
+    return !!document.getElementById('hw-back-marker');
+  }
+
+  function initQuizBlocks() {
+    var blocks = document.querySelectorAll('.hw.hw-quiz[data-hw-char]');
+    if (!blocks || blocks.length === 0) return;
+
+    blocks.forEach(function(block, idx) {
+      if (block.dataset.hwInited === '1') return;
+      block.dataset.hwInited = '1';
+
+      var ch = block.dataset.hwChar;
+      var outline = block.dataset.hwOutline === '1';
+      var target = block.querySelector('.hw-target');
+      var status = block.querySelector('.hw-status');
+      var dataEl = block.querySelector('script.hw-data');
+      if (!ch || !target || !status || !dataEl) return;
+
+      var charData = safeJsonParse(dataEl.textContent);
+      if (!charData || !charData.strokes) {
+        status.textContent = 'Stroke data missing for: ' + ch;
+        return;
+      }
+
+      // Unique target id
+      var tid = 'hw-target-' + idx + '-' + Math.floor(Math.random() * 1e9);
+      target.setAttribute('id', tid);
+      
+      function parseRgb(rgb) {
+        const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
+      }
+    
+      function isDarkBg() {
+        const bg = getComputedStyle(document.body).backgroundColor || "";
+        const rgb = parseRgb(bg);
+        if (!rgb) return false; // fallback: assume light
+        const [r,g,b] = rgb;
+        // perceived luminance
+        const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+        return lum < 0.5;
+      }
+    
+      const dark = isDarkBg();
+    
+      const palette = dark ? {
+        strokeColor:  "#f2f2f2",
+        outlineColor: "rgba(255,255,255,0.22)",
+        drawingColor: "#ffffff",
+        highlightColor:"#ffd166",
+        radicalColor: "#ffffff"
+      } : {
+        strokeColor:  "#111111",
+        outlineColor: "rgba(0,0,0,0.18)",
+        drawingColor: "#000000",
+        highlightColor:"#f77f00",
+        radicalColor: "#000000"
+      };
+
+      var writer = HanziWriter.create(tid, ch, {
+        ...palette,
+        width: 240,
+        height: 240,
+        padding: 10,
+        showCharacter: false,
+        showOutline: outline,
+        // colors for dark background
+        strokeColor: '#f2f2f2',
+        // offline stroke data
+        charDataLoader: function() { return charData; }
+      });
+
+      // collect user-drawn paths for showing on back
+      var drawn = [];
+      var mistakes = 0;
+
+      status.textContent = outline
+        ? 'Napiš dle předlohy.'
+        : 'Napiš z paměti.';
+
+      writer.quiz({
+        showOutline: outline,
+        showCharacter: false,
+        highlightOnComplete: true,
+        onMistake: function(strokeData) {
+          mistakes = strokeData && typeof strokeData.totalMistakes === 'number'
+            ? strokeData.totalMistakes
+            : (mistakes + 1);
+          status.textContent = 'Mistakes: ' + mistakes;
+        },
+        onCorrectStroke: function(strokeData) {
+          if (strokeData && strokeData.drawnPath && strokeData.drawnPath.pathString) {
+            drawn.push(strokeData.drawnPath.pathString);
+          }
+          if (strokeData && typeof strokeData.totalMistakes === 'number') {
+            mistakes = strokeData.totalMistakes;
+          }
+        },
+        onComplete: function(summary) {
+          var totalMistakes = summary && typeof summary.totalMistakes === 'number'
+            ? summary.totalMistakes
+            : mistakes;
+          status.textContent = 'Hotovo ✓  Chyb: ' + totalMistakes;
+
+          // persist for back side rendering
+          try {
+            var key = 'hw_last_' + ch + '_' + (outline ? 'o' : 'r');
+            localStorage.setItem(key, JSON.stringify({
+              ch: ch,
+              outline: outline,
+              totalMistakes: totalMistakes,
+              drawn: drawn
+            }));
+          } catch(e) {}
+        }
+      });
+    });
+  }
+
+  function renderUserSvg(paths) {
+    // Best-effort render of user drawn paths.
+    // HanziWriter may output either 1024-space or already-scaled coords; infer a sensible viewBox.
+    function inferBoxSize(ps) {
+      var maxVal = 0;
+      (ps || []).forEach(function(d) {
+        if (!d) return;
+        var nums = d.match(/-?\d*\.?\d+/g) || [];
+        nums.forEach(function(n) {
+          var v = Math.abs(parseFloat(n));
+          if (!isNaN(v) && v > maxVal) maxVal = v;
+        });
+      });
+      // Heuristic: if it's near 1024 assume 1024-space, otherwise use max (min 240) with padding.
+      if (maxVal > 600) return 1024;
+      if (maxVal < 10) return 240;
+      return Math.max(240, Math.ceil(maxVal * 1.05));
+    }
+
+    var box = inferBoxSize(paths);
+    var p = (paths || []).map(function(d) {
+      return '<path d="' + d.replace(/"/g,'&quot;') + '" fill="none" stroke="#f2f2f2" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>';
+    }).join('');
+
+    return (
+      '<svg viewBox="0 0 ' + box + ' ' + box + '" width="240" height="240" style="display:block;margin:auto">' +
+        p +
+      '</svg>'
+    );
+  }
+
+  function initBackResults() {
+    var blocks = document.querySelectorAll('.hw.hw-result[data-hw-char]');
+    if (!blocks || blocks.length === 0) return;
+
+    // Kanji back side: hide the duplicated question area (we show results + correct below).
+    try {
+      document.querySelectorAll('.qa').forEach(function(el){ el.style.display = 'none'; });
+      document.querySelectorAll('.qa + br').forEach(function(el){ el.style.display='none'; });
+      document.querySelectorAll('.qa + br + br').forEach(function(el){ el.style.display='none'; });
+    } catch(e) {}
+
+    blocks.forEach(function(block, idx) {
+      if (block.dataset.hwInited === '1') return;
+      block.dataset.hwInited = '1';
+
+      var ch = block.dataset.hwChar;
+      var outline = block.dataset.hwOutline === '1';
+      var userEl = block.querySelector('.hw-user');
+      var correctEl = block.querySelector('.hw-correct');
+      var status = block.querySelector('.hw-status');
+      var dataEl = block.querySelector('script.hw-data');
+      if (!ch || !userEl || !correctEl || !status || !dataEl) return;
+
+      var charData = safeJsonParse(dataEl.textContent);
+      var key = 'hw_last_' + ch + '_' + (outline ? 'o' : 'r');
+
+      var saved = {};
+      try { saved = safeJsonParse(localStorage.getItem(key) || '{}'); } catch(e) {}
+
+      var totalMistakes = saved && typeof saved.totalMistakes === 'number' ? saved.totalMistakes : null;
+      status.textContent = totalMistakes === null ? 'Počet chyb neznámý.' : ('Výsledek ✓  Chyb: ' + totalMistakes);
+
+      // Render user's drawing (preferred over showing the kanji itself)
+      if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
+        userEl.innerHTML = renderUserSvg(saved.drawn);
+      } else {
+        userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
+      }
+
+      // Render correct output (nice glyph)
+      // Prefer showing the actual kanji as a clean glyph (not stroke paths).
+      correctEl.innerHTML =
+        '<div class="hw-glyph" aria-label="Správně">' +
+          '<span class="hw-glyph-char">' + ch + '</span>' +
+        '</div>';
+    });
+  }
+
+  function initAll() {
+    if (typeof HanziWriter === 'undefined') {
+      setTimeout(initAll, 30);
+      return;
+    }
+    if (isBackSide()) {
+      initBackResults();
+    } else {
+      initQuizBlocks();
+    }
+  }
+
+  setTimeout(initAll, 1);
+})();
+</script>
 """
 
 kantanji_model = genanki.Model(
@@ -53,8 +428,16 @@ kantanji_model = genanki.Model(
     templates=[
         {
             'name': 'Card 1',
-            'qfmt': "<div class='c'>{{Q}}</div><script>['click','touchstart'].forEach(event=>document.addEventListener(event,()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>",
-            'afmt': "<div class='c qa'>{{Q}}</div><br><br><div class='c'>{{A}}</div><script>['click','touchstart'].forEach(event=>document.addEventListener(event, ()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>",
+            'qfmt': (
+                "<div class='c'>{{Q}}</div>"
+                "<script>['click','touchstart'].forEach(event=>document.addEventListener(event,()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
+                + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
+            ),
+            'afmt': (
+                "<div id='hw-back-marker' style='display:none'></div><div class='c qa'>{{Q}}</div><br><br><div class='c'>{{A}}</div>"
+                "<script>['click','touchstart'].forEach(event=>document.addEventListener(event, ()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
+                + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
+            ),
         },
     ],
     css=css
@@ -104,25 +487,44 @@ def read_kanji_csv(key, data):
 
         kanji_alive = retrieve_row_kanjialive_url(item)
 
+        # ---------------------------------------------------------------------
+        # KANJI CARDS:
+        # - cards[]: first in order => draw WITH hints (outline)
+        # - cards_translation[]: second in order => draw WITHOUT hints (recall)
+        # ---------------------------------------------------------------------
+        hw_outline = _hanziwriter_widget_html(item['kanji'], show_outline=True, kind='quiz')
+        hw_outline_result = _hanziwriter_widget_html(item['kanji'], show_outline=True, kind='result')
+        hw_recall = _hanziwriter_widget_html(item['kanji'], show_outline=False, kind='quiz')
+        hw_recall_result = _hanziwriter_widget_html(item['kanji'], show_outline=False, kind='result')
+
         cards.append([
-            f"<a class=\"a\" href=\"{kanji_alive}\">{item['kanji']} KanjiAlive</a><div style=\"font-size: 32pt;\">{item['kanji']}</div>",
+            f"<a class=\"a\" href=\"{kanji_alive}\">{item['kanji']} KanjiAlive</a>"
+            f"<div style=\"font-size: 32pt;\">{item['kanji']}</div>"
+            f"{hw_outline}",
 
             f"<div>{onyomi + kunyomi}</div>"
-            f"<div style=\"font-size: 26pt;\">{item['imi']}</div>{extra}",
+            f"<div style=\"font-size: 26pt;\">{item['imi']}</div>"
+            f"{hw_outline_result}{extra}",
 
             item["guid"], name, "kanji", 0
         ])
 
-        # Translation to kanji card
+        # Translation to kanji card (recall / no outline)
         cards_translation.append([
-            f"<a class=\"a\" href=\"{kanji_alive}\">{item['kanji']} KanjiAlive</a><div style=\"font-size: 26pt;\">{item['imi']}</div>",
-
+            f"<a class=\"a\" href=\"{kanji_alive}\">{item['kanji']} KanjiAlive</a>"
+            f"<div style=\"font-size: 26pt;\">{item['imi']}</div>"
             f"<div>{onyomi + kunyomi}</div>"
-            f"<div style=\"font-size: 30pt;\">{item['kanji']}</div>{extra}",
+            f"{hw_recall}",
+
+            f"{hw_recall_result}<br><br><div>{onyomi + kunyomi}</div><div style=\"font-size: 30pt;\">"
+            f"<div style=\"font-size: 26pt;\">{item['imi']}</div>{extra}",
 
             item["guid"] + "-rev", name, "kanji", 0
         ])
 
+        # ---------------------------------------------------------------------
+        # VOCABULARY CARDS MUST STAY THE SAME
+        # ---------------------------------------------------------------------
         for vocab_item in item.vocabulary():
 
             usage_lines = "".join(
@@ -193,8 +595,15 @@ def generate_numeric_id_from_text(text, max_digits=16):
 
 
 def save_deck(filename, deck):
-    # Export the deck to a .apkg file
-    genanki.Package(deck).write_to_file(filename)
+    # Export the deck to a .apkg file (offline: bundle hanziwriter.min.js as media if present)
+    pkg = genanki.Package(deck)
+    if HANZIWRITER_LIB_PATH.exists():
+        pkg.media_files = [str(HANZIWRITER_LIB_PATH)]
+    else:
+        print(f"W: HanziWriter library not found at {HANZIWRITER_LIB_PATH}. "
+              f"Cards will render without drawing support.")
+        pkg.media_files = []
+    pkg.write_to_file(filename)
 
 
 def create_anki_deck(key, reader, filename):

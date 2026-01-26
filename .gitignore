@@ -9,6 +9,8 @@
 !pdf/
 !src/
 !static/
+!assets
+!assets/*
 !main.py
 !src/static.py
 !*.md

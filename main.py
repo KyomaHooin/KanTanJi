@@ -300,6 +300,9 @@ for did in complementary_datasets:
 
 readme = """
 # Kan<sup>Tan</sup>Ji &nbsp; 漢<sup>単</sup>字
+
+> Simple KanJi training platform for czech audience.
+
 Jednoduchá aplikace na trénování Kanji. Projekt vznikl jako spolupráce dobrovolníků
 a japanistů na FF MUNI. Cílem je nabídnout různé způsoby učení kanji s kompletními
 informacemi přímo v češtině.
