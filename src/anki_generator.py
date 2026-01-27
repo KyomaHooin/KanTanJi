@@ -199,271 +199,233 @@ css = """
 HANZIWRITER_INIT_JS = r"""
 <script>
 (function() {
-  function safeJsonParse(txt) {
-    try { return JSON.parse(txt || '{}'); } catch(e) { return {}; }
-  }
+ function safeJsonParse(txt) {
+  try { return JSON.parse(txt || '{}'); } catch(e) { return {}; }
+ }
+ function isBackSide() {
+  return !!document.getElementById('hw-back-marker');
+ }
+ function initQuizBlocks() {
+  var blocks = document.querySelectorAll('.hw.hw-quiz[data-hw-char]');
+  if (!blocks || blocks.length === 0) return;
+   blocks.forEach(function(block, idx) {
+   if (block.dataset.hwInited === '1') return;
+   block.dataset.hwInited = '1';
+   var ch = block.dataset.hwChar;
+   var outline = block.dataset.hwOutline === '1';
+   var target = block.querySelector('.hw-target');
+   var status = block.querySelector('.hw-status');
+   var dataEl = block.querySelector('script.hw-data');
+   if (!ch || !target || !status || !dataEl) return;
 
-  function isBackSide() {
-    return !!document.getElementById('hw-back-marker');
-  }
+   var charData = safeJsonParse(dataEl.textContent);
+   if (!charData || !charData.strokes) {
+    status.textContent = 'Stroke data missing for: ' + ch;
+    return;
+   }
+   // Unique target id
+   var tid = 'hw-target-' + idx + '-' + Math.floor(Math.random() * 1e9);
+   target.setAttribute('id', tid);
 
-  function initQuizBlocks() {
-    var blocks = document.querySelectorAll('.hw.hw-quiz[data-hw-char]');
-    if (!blocks || blocks.length === 0) return;
+   function parseRgb(rgb) {
+    const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
+   }
 
-    blocks.forEach(function(block, idx) {
-      if (block.dataset.hwInited === '1') return;
-      block.dataset.hwInited = '1';
+   function isDarkBg() {
+    const bg = getComputedStyle(document.body).backgroundColor || "";
+    const rgb = parseRgb(bg);
+    if (!rgb) return false; // fallback: assume light
+    const [r,g,b] = rgb;
+    const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+    return lum < 0.5;
+   }
 
-      var ch = block.dataset.hwChar;
-      var outline = block.dataset.hwOutline === '1';
-      var target = block.querySelector('.hw-target');
-      var status = block.querySelector('.hw-status');
-      var dataEl = block.querySelector('script.hw-data');
-      if (!ch || !target || !status || !dataEl) return;
+   const dark = isDarkBg();
+   const palette = dark ? {
+    strokeColor:  "#f2f2f2",
+    outlineColor: "rgba(255,255,255,0.22)",
+    drawingColor: "#ffffff",
+    highlightColor:"#ffd166",
+    radicalColor: "#ffffff"
+   } : {
+    strokeColor:  "#111111",
+    outlineColor: "rgba(0,0,0,0.18)",
+    drawingColor: "#000000",
+    highlightColor:"#f77f00",
+    radicalColor: "#000000"
+   };
 
-      var charData = safeJsonParse(dataEl.textContent);
-      if (!charData || !charData.strokes) {
-        status.textContent = 'Stroke data missing for: ' + ch;
-        return;
-      }
+   var writer = HanziWriter.create(tid, ch, {
+    ...palette,
+    width: 240,
+    height: 240,
+    padding: 10,
+    showCharacter: false,
+    showOutline: outline,
+    charDataLoader: function() { return charData; }
+   });
 
-      // Unique target id
-      var tid = 'hw-target-' + idx + '-' + Math.floor(Math.random() * 1e9);
-      target.setAttribute('id', tid);
+   var drawn = [];
+   var mistakes = 0;
+   status.textContent = outline ? 'Napiš dle předlohy.' : 'Napiš z paměti.';
 
-      function parseRgb(rgb) {
-        const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-        return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
-      }
-
-      function isDarkBg() {
-        const bg = getComputedStyle(document.body).backgroundColor || "";
-        const rgb = parseRgb(bg);
-        if (!rgb) return false; // fallback: assume light
-        const [r,g,b] = rgb;
-        // perceived luminance
-        const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
-        return lum < 0.5;
-      }
-
-      const dark = isDarkBg();
-
-      const palette = dark ? {
-        strokeColor:  "#f2f2f2",
-        outlineColor: "rgba(255,255,255,0.22)",
-        drawingColor: "#ffffff",
-        highlightColor:"#ffd166",
-        radicalColor: "#ffffff"
-      } : {
-        strokeColor:  "#111111",
-        outlineColor: "rgba(0,0,0,0.18)",
-        drawingColor: "#000000",
-        highlightColor:"#f77f00",
-        radicalColor: "#000000"
-      };
-
-      var writer = HanziWriter.create(tid, ch, {
-        ...palette,
-        width: 240,
-        height: 240,
-        padding: 10,
-        showCharacter: false,
-        showOutline: outline,
-        // offline stroke data
-        charDataLoader: function() { return charData; }
-      });
-
-      // collect user-drawn paths for showing on back
-      var drawn = [];
-      var mistakes = 0;
-
-      status.textContent = outline
-        ? 'Napiš dle předlohy.'
-        : 'Napiš z paměti.';
-
-      writer.quiz({
-        showOutline: outline,
-        showCharacter: false,
-        highlightOnComplete: true,
-        showHintAfterMisses: 1,
-        onMistake: function(strokeData) {
-          mistakes = strokeData && typeof strokeData.totalMistakes === 'number'
-            ? strokeData.totalMistakes
-            : (mistakes + 1);
-          status.textContent = 'Mistakes: ' + mistakes;
-        },
-        onCorrectStroke: function(strokeData) {
-          if (strokeData && strokeData.drawnPath && strokeData.drawnPath.pathString) {
-            drawn.push(strokeData.drawnPath.pathString);
-          }
-          if (strokeData && typeof strokeData.totalMistakes === 'number') {
-            mistakes = strokeData.totalMistakes;
-          }
-        },
-        onComplete: function(summary) {
-          var totalMistakes = summary && typeof summary.totalMistakes === 'number'
-            ? summary.totalMistakes
-            : mistakes;
-          status.textContent = 'Hotovo ✓  Chyb: ' + totalMistakes;
-
-          // persist for back side rendering
-          try {
-            var key = 'hw_last_' + ch + '_' + (outline ? 'o' : 'r');
-            localStorage.setItem(key, JSON.stringify({
-              ch: ch,
-              outline: outline,
-              totalMistakes: totalMistakes,
-              drawn: drawn
-            }));
-          } catch(e) {}
-        }
-      });
-    });
-  }
-
-  function renderUserSvg(paths, strokeColor) {
-    // Best-effort render of user drawn paths.
-    // HanziWriter may output either 1024-space or already-scaled coords; infer a sensible viewBox.
-    function inferBoxSize(ps) {
-      var maxVal = 0;
-      (ps || []).forEach(function(d) {
-        if (!d) return;
-        var nums = d.match(/-?\d*\.?\d+/g) || [];
-        nums.forEach(function(n) {
-          var v = Math.abs(parseFloat(n));
-          if (!isNaN(v) && v > maxVal) maxVal = v;
-        });
-      });
-      // Heuristic: if it's near 1024 assume 1024-space, otherwise use max (min 240) with padding.
-      if (maxVal > 600) return 1024;
-      if (maxVal < 10) return 240;
-      return Math.max(240, Math.ceil(maxVal * 1.05));
-    }
-
-    var box = inferBoxSize(paths);
-    var color = strokeColor || "#f2f2f2";
-
-    var p = (paths || []).map(function(d) {
-    return '<path d="' + d.replace(/"/g,'&quot;') + '" fill="none" stroke="' + color +
-      '" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>';
-    }).join('');
-
-    return (
-    '<svg viewBox="0 0 ' + box + ' ' + box + '" width="240" height="240" style="display:block;margin:auto">' +
-      p +
-    '</svg>'
-    );
-  }
-
-  function initBackResults() {
-    var blocks = document.querySelectorAll('.hw.hw-result[data-hw-char]');
-    if (!blocks || blocks.length === 0) return;
-
-    // Kanji back side: hide the duplicated question area (we show results + correct below).
-    try {
-      document.querySelectorAll('.qa').forEach(function(el){ el.style.display = 'none'; });
-      document.querySelectorAll('.qa + br').forEach(function(el){ el.style.display='none'; });
-      document.querySelectorAll('.qa + br + br').forEach(function(el){ el.style.display='none'; });
-    } catch(e) {}
-
-    // Keep only a single result canvas (first one), remove any duplicates
-    var block = blocks[0];
-    for (var i = 1; i < blocks.length; i++) {
-      try { blocks[i].remove(); } catch(e) {}
-    }
-    var idx = 0;
-
-    // (single block)
-    (function(block, idx) {
-      if (block.dataset.hwInited === '1') return;
-      block.dataset.hwInited = '1';
-
-      var ch = block.dataset.hwChar;
-      var outline = block.dataset.hwOutline === '1';
-      var userEl = block.querySelector('.hw-user');
-      var correctEl = block.querySelector('.hw-correct');
-      var status = block.querySelector('.hw-status');
-      var dataEl = block.querySelector('script.hw-data');
-      if (!ch || !userEl || !correctEl || !status || !dataEl) return;
-
-      var charData = safeJsonParse(dataEl.textContent);
+   writer.quiz({
+    showOutline: outline,
+    showCharacter: false,
+    highlightOnComplete: true,
+    showHintAfterMisses: 1,
+    onMistake: function(strokeData) {
+     mistakes = strokeData && typeof strokeData.totalMistakes === 'number' ? strokeData.totalMistakes : (mistakes + 1);
+     status.textContent = 'Mistakes: ' + mistakes;
+    },
+    onCorrectStroke: function(strokeData) {
+     if (strokeData && strokeData.drawnPath && strokeData.drawnPath.pathString) {
+      drawn.push(strokeData.drawnPath.pathString);
+     }
+     if (strokeData && typeof strokeData.totalMistakes === 'number') {
+      mistakes = strokeData.totalMistakes;
+     }
+    },
+    onComplete: function(summary) {
+     var totalMistakes = summary && typeof summary.totalMistakes === 'number' ? summary.totalMistakes : mistakes;
+     status.textContent = 'Hotovo ✓  Chyb: ' + totalMistakes;
+     try {
       var key = 'hw_last_' + ch + '_' + (outline ? 'o' : 'r');
+      localStorage.setItem(key, JSON.stringify({
+       ch: ch, outline: outline, totalMistakes: totalMistakes, drawn: drawn
+      }));
+     } catch(e) {}
+    }
+   }); 
+  });
+ }
 
-      var saved = {};
-      try { saved = safeJsonParse(localStorage.getItem(key) || '{}'); } catch(e) {}
-
-      var totalMistakes = saved && typeof saved.totalMistakes === 'number' ? saved.totalMistakes : null;
-      status.textContent = totalMistakes === null ? 'Počet chyb neznámý.' : ('Výsledek ✓  Chyb: ' + totalMistakes);
-
-      function parseRgb(rgb) {
-  const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-  return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
-}
-function isDarkBg() {
-  const bg = getComputedStyle(document.body).backgroundColor || "";
-  const rgb = parseRgb(bg);
-  if (!rgb) return false;
-  const [r,g,b] = rgb;
-  const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
-  return lum < 0.5;
-}
-const dark = isDarkBg();
-const palette = dark ? {
-  userInk: "#f2f2f2",
-  correctRed: "rgb(255, 80, 80)"
-} : {
-  userInk: "#111111",
-  correctRed: "rgb(200, 0, 0)"
-};
-
-// --- render user drawing on top ---
-if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
-  userEl.innerHTML = renderUserSvg(saved.drawn, palette.userInk);
-} else {
-  userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
-}
-
-// --- render correct kanji underneath in red low opacity ---
-var cid = 'hw-correct-' + idx + '-' + Math.floor(Math.random() * 1e9);
-correctEl.setAttribute('id', cid);
-correctEl.innerHTML = ''; // ensure empty
-
-try {
-// Fallback for HanziWriter builds that don't expose renderCharacter()
-    var w = HanziWriter.create(cid, ch, {
-      width: 240,
-      height: 240,
-      padding: 10,
-      showOutline: false,
-      showCharacter: true,
-      strokeColor: palette.correctRed,
-      outlineColor: 'rgba(0,0,0,0)',
-      drawingColor: 'rgba(0,0,0,0)',
-      highlightColor: 'rgba(0,0,0,0)',
-      renderUserSvg: 80,
-      charDataLoader: function() { return charData; }
+ function renderUserSvg(paths, strokeColor) {
+  function inferBoxSize(ps) {
+   var maxVal = 0;
+   (ps || []).forEach(function(d) {
+    if (!d) return;
+    var nums = d.match(/-?\d*\.?\d+/g) || [];
+    nums.forEach(function(n) {
+     var v = Math.abs(parseFloat(n));
+     if (!isNaN(v) && v > maxVal) maxVal = v;
     });
-    if (w && typeof w.showCharacter === 'function') w.showCharacter();
-} catch(e) {
-  correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>';
+   });
+   // Heuristic: if it's near 1024 assume 1024-space, otherwise use max (min 240) with padding.
+   if (maxVal > 600) return 1024;
+   if (maxVal < 10) return 240;
+   return Math.max(240, Math.ceil(maxVal * 1.05));
+  }
+
+  var box = inferBoxSize(paths);
+  var color = strokeColor || "#f2f2f2";
+  var p = (paths || []).map(function(d) {
+   return '<path d="' + d.replace(/"/g,'&quot;') + '" fill="none" stroke="' + color +
+    '" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>';
+  }).join('');
+
+  return ('<svg viewBox="0 0 ' + box + ' ' + box + '" width="240" height="240" style="display:block;margin:auto">' + p + '</svg>');
+ }
+
+ function initBackResults() {
+  var blocks = document.querySelectorAll('.hw.hw-result[data-hw-char]');
+  if (!blocks || blocks.length === 0) return;
+  try {
+   document.querySelectorAll('.qa').forEach(function(el){ el.style.display = 'none'; });
+   document.querySelectorAll('.qa + br').forEach(function(el){ el.style.display='none'; });
+   document.querySelectorAll('.qa + br + br').forEach(function(el){ el.style.display='none'; });
+  } catch(e) {}
+
+  var block = blocks[0];
+  for (var i = 1; i < blocks.length; i++) {
+   try { blocks[i].remove(); } catch(e) {}
+  }
+  var idx = 0;
+
+  (function(block, idx) {
+   if (block.dataset.hwInited === '1') return;
+   block.dataset.hwInited = '1';
+   var ch = block.dataset.hwChar;
+   var outline = block.dataset.hwOutline === '1';
+   var userEl = block.querySelector('.hw-user');
+   var correctEl = block.querySelector('.hw-correct');
+   var status = block.querySelector('.hw-status');
+   var dataEl = block.querySelector('script.hw-data');
+   if (!ch || !userEl || !correctEl || !status || !dataEl) return;
+
+   var charData = safeJsonParse(dataEl.textContent);
+   var key = 'hw_last_' + ch + '_' + (outline ? 'o' : 'r');
+   var saved = {};
+   try { saved = safeJsonParse(localStorage.getItem(key) || '{}'); } catch(e) {}
+
+   var totalMistakes = saved && typeof saved.totalMistakes === 'number' ? saved.totalMistakes : null;
+   status.textContent = totalMistakes === null ? 'Počet chyb neznámý.' : ('Výsledek ✓  Chyb: ' + totalMistakes);
+
+   function parseRgb(rgb) {
+    const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
+   }
+  function isDarkBg() {
+   const bg = getComputedStyle(document.body).backgroundColor || "";
+   const rgb = parseRgb(bg);
+   if (!rgb) return false;
+   const [r,g,b] = rgb;
+   const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+   return lum < 0.5;
+  }
+  const dark = isDarkBg();
+  const palette = dark ? {
+   userInk: "#f2f2f2",
+   correctRed: "rgb(255, 80, 80)"
+  } : {
+   userInk: "#111111",
+   correctRed: "rgb(200, 0, 0)"
+  };
+
+  if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
+   userEl.innerHTML = renderUserSvg(saved.drawn, palette.userInk);
+  } else {
+   userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
+  }
+
+  var cid = 'hw-correct-' + idx + '-' + Math.floor(Math.random() * 1e9);
+  correctEl.setAttribute('id', cid);
+  correctEl.innerHTML = ''; // ensure empty
+  try {
+   var w = HanziWriter.create(cid, ch, {
+    width: 240,
+    height: 240,
+    padding: 10,
+    showOutline: false,
+    showCharacter: true,
+    strokeColor: palette.correctRed,
+    outlineColor: 'rgba(0,0,0,0)',
+    drawingColor: 'rgba(0,0,0,0)',
+    highlightColor: 'rgba(0,0,0,0)',
+    renderUserSvg: 80,
+    charDataLoader: function() { return charData; }
+   });
+   if (w && typeof w.showCharacter === 'function') w.showCharacter();
+  } catch(e) {
+   correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>';
+  }
+ })(block, idx);
 }
-    })(block, idx);
-  }
 
-  function initAll() {
-    if (typeof HanziWriter === 'undefined') {
-      setTimeout(initAll, 30);
-      return;
-    }
-    if (isBackSide()) {
-      initBackResults();
-    } else {
-      initQuizBlocks();
-    }
-  }
+function initAll() {
+ if (typeof HanziWriter === 'undefined') {
+  setTimeout(initAll, 30);
+  return;
+ }
+ if (isBackSide()) {
+  initBackResults();
+ } else {
+  initQuizBlocks();
+ }
+}
 
-  setTimeout(initAll, 1);
+setTimeout(initAll, 1);
 })();
 </script>
 """
