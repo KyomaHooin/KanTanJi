@@ -18,16 +18,17 @@ Přidávám do databáze chybějící znak kanji. Rozumím tomu, že zadávání
    - nechybí základní slovíčko, tedy pokud není definováno u jiného kanji v tom slově
    - neobsahuje nerelevantní či nepoužívaná slovíčka
  - nechybí labely, např. ``raberu | suru`` pro する sloveso
+ - kanji má referenci na radikál (tabulka [zde](https://github.com/KanjiBase/KanTanJi/blob/assets/radicals.pdf))
  - většina klíčů může (a někdy musí) být zadávána vícekrát (např. více labelů), výjimkou jsou ``kanji``, `tango`, `imi` - tyto mohou být pouze jednou
  - poznámky jsou zadávány klíčem ``備<び>考<こう>`` pro konzistentnost, pokud není důvod udělat jinak
 
 ## Zadávám Kanji [nahraď znakem]
 Kanji lze vyplnit do tabulky níže, nebo tabulku nahradit přiloženým souborem (CSV, Excel..). 
 
-|klíč|hodnota|klíč| hodnota       | klíč   | hodnota                      | klíč       | hodnota                         |
-|-----|---|-------|---------------|--------|------------------------------|------------|---------------------------------|
-|kanji| ○ | imi   | [uveď význam] | onyomi | [čtení nebo smaž i s klíčem] | kunyomi    | [čtení nebo smaž i s klíčem]    |
-|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |
-|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |
-|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |
-|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |
+|klíč|hodnota|klíč| hodnota       | klíč   | hodnota                      | klíč       | hodnota                         | klíč | hodnota    |
+|-----|---|-------|---------------|--------|------------------------------|------------|---------------------------------|------|------------|
+|kanji| ○ | imi   | [uveď význam] | onyomi | [čtení nebo smaž i s klíčem] | kunyomi    | [čtení nebo smaž i s klíčem]    | ref  | radical-XY |
+|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |      |            |
+|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |      |            |
+|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |      |            |
+|kanji| ○ | tango | ○<○>○<○>      | imi    | [význam slovíčka]            | tsukaikata | [příkladová věta i s překladem] |      |            |
