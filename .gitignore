@@ -4,6 +4,7 @@
 # Allow specific files and folders
 !.gitignore
 !.github/
+!.github/*
 !misc/
 !anki/
 !pdf/
