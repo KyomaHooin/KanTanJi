@@ -11,7 +11,12 @@ import time
 from anki.collection import Collection
 from anki.notes import Note
 from anki.models import NotetypeDict
+from anki.import_export_pb2 import (
+    ExportAnkiPackageOptions,
+    ExportLimit
+)
 import markdown
+
 
 from utils import generate_furigana, sanitize_filename, create_dataset_readme
 from utils_data_entitites import InputFormat
@@ -655,19 +660,20 @@ def create_anki_deck(key, reader, filename):
             # Use the absolute path to ensure Anki finds it during the temporary session
             col.media.add_file(str(HANZIWRITER_LIB_PATH.absolute()))
 
-        try:
-            from anki.exporting import ExportAnkiPackageRequest
-        except ImportError:
-            # Fallback for specific sub-versions of the 25.x series
-            from anki.models_pb2 import ExportAnkiPackageRequest
-
-        req = ExportAnkiPackageRequest(
-            out_path=str(Path(filename).absolute()),
-            deck_id=deck_id,
-            with_scheduling=False,  # This replaces includeSched = False
-            with_media=True  # Usually desired, set to False if not needed
+        options = ExportAnkiPackageOptions(
+            with_scheduling=True,
+            with_deck_configs=True,
+            with_media=True,
+            legacy=False
         )
-        count = col.export_anki_package(req)
+
+        # Construct ExportLimit using deck_id
+        limit = ExportLimit(deck_id=deck_id)
+
+        col.export_anki_package(
+            out_path=str(Path(filename).absolute()),
+            options=options, limit=limit
+        )
         # todo consider printing count
 
     finally:
