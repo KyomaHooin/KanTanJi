@@ -1,13 +1,8 @@
 from pathlib import Path
 
-import genanki
-import hashlib
-import uuid
 import markdown
 
-from utils import generate_furigana, retrieve_row_kanjialive_url, sanitize_filename, create_dataset_readme
-from utils_data_entitites import InputFormat
-from utils_html import parse_item_props_html
+from utils import sanitize_filename, create_dataset_readme
 
 import json
 
