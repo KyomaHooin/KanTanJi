@@ -1,12 +1,22 @@
 from pathlib import Path
 from collections.abc import Callable
 
-import genanki
 import hashlib
 import uuid
-import markdown
-import json
+import tempfile
 import os
+import shutil
+import time
+
+from anki.collection import Collection
+from anki.notes import Note
+from anki.models import NotetypeDict
+from anki.import_export_pb2 import (
+    ExportAnkiPackageOptions,
+    ExportLimit
+)
+import markdown
+
 
 from utils import generate_furigana, sanitize_filename, create_dataset_readme
 from utils_data_entitites import InputFormat
@@ -23,6 +33,9 @@ from utils_html import parse_item_props_html
 # Recommended source for (2): mnako/hanzi-writer-data-ja (AnimCJK -> HanziWriter format)
 # -----------------------------------------------------------------------------
 
+MODEL_ID = 1607392319
+FIELD_IDS = [1001, 1002, 1003] # Static IDs for UID, Q, A
+TEMPLATE_ID = 2001
 HANZIWRITER_LIB_PATH = Path(os.environ.get("KANTANJI_HANZIWRITER_LIB", "assets/hanziwriter.min.js"))
 HANZIWRITER_DATA_JA_DIR = Path(os.environ.get("KANTANJI_HANZI_DATA_JA", "assets/hanzi-writer-data-ja/data"))
 # Inline the HanziWriter library into the card templates (Anki often won't load .js via <script src>)
@@ -335,11 +348,11 @@ HANZIWRITER_INIT_JS = r"""
    document.querySelectorAll('.qa').forEach(function(el){ el.style.display = 'none'; });
    document.querySelectorAll('.qa + br').forEach(function(el){ el.style.display='none'; });
    document.querySelectorAll('.qa + br + br').forEach(function(el){ el.style.display='none'; });
-  } catch(e) {}
+  } catch(e) {console.error(e); }
 
   var block = blocks[0];
   for (var i = 1; i < blocks.length; i++) {
-   try { blocks[i].remove(); } catch(e) {}
+   try { blocks[i].remove(); } catch(e) { console.error(e); }
   }
   var idx = 0;
 
@@ -357,10 +370,15 @@ HANZIWRITER_INIT_JS = r"""
    var charData = safeJsonParse(dataEl.textContent);
    var key = 'hw_last_' + ch + '_' + (outline ? 'o' : 'r');
    var saved = {};
-   try { saved = safeJsonParse(localStorage.getItem(key) || '{}'); } catch(e) {}
+   try { saved = safeJsonParse(localStorage.getItem(key) || '{}'); } catch(e) { console.error(e); }
 
    var totalMistakes = saved && typeof saved.totalMistakes === 'number' ? saved.totalMistakes : null;
    status.textContent = totalMistakes === null ? 'Počet chyb neznámý.' : ('Výsledek ✓  Chyb: ' + totalMistakes);
+   if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
+    userEl.innerHTML = renderUserSvg(saved.drawn, palette.userInk);
+   } else {
+    userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
+   }
 
    function parseRgb(rgb) {
     const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
@@ -388,7 +406,7 @@ HANZIWRITER_INIT_JS = r"""
   } else {
    userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
   }
-
+  try { localStorage.removeItem(key); } catch(e) {}
   var cid = 'hw-correct-' + idx + '-' + Math.floor(Math.random() * 1e9);
   correctEl.setAttribute('id', cid);
   correctEl.innerHTML = ''; // ensure empty
@@ -408,7 +426,7 @@ HANZIWRITER_INIT_JS = r"""
    });
    if (w && typeof w.showCharacter === 'function') w.showCharacter();
   } catch(e) {
-   correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>';
+   correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>'; console.error(e);
   }
  })(block, idx);
 }
@@ -429,33 +447,6 @@ setTimeout(initAll, 1);
 })();
 </script>
 """
-
-kantanji_model = genanki.Model(
-    1607392319,
-    'KanTanJi Anki Model',
-    fields=[{
-        "name": 'Q',
-    }, {
-        "name": 'A'
-    }],
-    templates=[
-        {
-            'name': 'Card 1',
-            'qfmt': (
-                    "<div class='c'>{{Q}}</div>"
-                    "<script>['click','touchstart'].forEach(event=>document.addEventListener(event,()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
-                    + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
-            ),
-            'afmt': (
-                    "<div id='hw-back-marker' style='display:none'></div><div class='c qa'>{{Q}}</div><br><br><div class='c'>{{A}}</div>"
-                    "<script>['click','touchstart'].forEach(event=>document.addEventListener(event, ()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
-                    + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
-            ),
-        },
-    ],
-    css=css
-)
-
 
 # Function to read the CSV data
 def read_kanji_csv(key, data):
@@ -603,62 +594,93 @@ def generate_numeric_id_from_text(text, max_digits=16):
     return numeric_id
 
 
-def save_deck(filename, deck):
-    # Export the deck to a .apkg file (offline: bundle hanziwriter.min.js as media if present)
-    pkg = genanki.Package(deck)
-    if HANZIWRITER_LIB_PATH.exists():
-        pkg.media_files = [str(HANZIWRITER_LIB_PATH)]
-    else:
-        print(f"W: HanziWriter library not found at {HANZIWRITER_LIB_PATH}. "
-              f"Cards will render without drawing support.")
-        pkg.media_files = []
-    pkg.write_to_file(filename)
-
-
 def create_anki_deck(key, reader, filename):
-    deck = None
-    deck_name = None
-    for row in reader:
+    temp_dir = tempfile.mkdtemp()
+    col_path = os.path.join(temp_dir, "collection.anki2")
+    col = Collection(col_path)
 
-        if deck_name != row[3]:
-            if deck:
-                raise ValueError("New anki deck created in the middle of table!")
-            deck_name = f"KanTanJi::{key}"
-            # Create the Anki deck
-            deck = genanki.Deck(
-                generate_numeric_id_from_text(deck_name),
-                deck_name
-            )
+    try:
+        deck_name = f"KanTanJi::{key}"
+        deck_id = col.decks.id(deck_name)
 
-        question_html = row[0]
-        answer_html = row[1]
-        card_type = row[4]
-        significance = row[5]
+        model = col.models.new("KanTanJi Anki Model")
 
-        tags = []
-        if card_type == "kanji":
-            tags.append("KanTanJi_Kanji")
-        else:
-            tags.append("KanTanJi_Tango")
-            if significance == 0:
-                tags.append("KanTanJi_Learn_Now")
-            elif significance == 1:
-                tags.append("KanTanJi_Learn_Deck")
+        field_names = ["UID", "Q", "A"]
+        for i, name in enumerate(field_names):
+            fld = col.models.new_field(name)
+            fld['id'] = FIELD_IDS[i]  # Force the field ID
+            fld['ord'] = i
+            col.models.add_field(model, fld)
+
+        template = col.models.new_template("KanTanJi")
+        template['id'] = TEMPLATE_ID  # Force the template ID
+
+        template['ord'] = 0
+        template['qfmt'] = (
+                "<div class='c'>{{Q}}</div>"
+                "<script>['click','touchstart'].forEach(event=>document.addEventListener(event,()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
+                + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
+        )
+        template['afmt'] = (
+                "<div id='hw-back-marker' style='display:none'></div><div class='c qa'>{{Q}}</div><br><br><div class='c'>{{A}}</div>"
+                "<script>['click','touchstart'].forEach(event=>document.addEventListener(event, ()=>document.querySelectorAll('ruby rt, .rlbl').forEach(x=>x.style.visibility='visible')));</script>"
+                + HANZIWRITER_LIB_INLINE + HANZIWRITER_INIT_JS
+        )
+        col.models.add_template(model, template)
+        model['css'] = css
+
+
+        col.models.add(model)
+        model['id'] = MODEL_ID
+        col.models.update(model)
+
+        model = col.models.get(MODEL_ID)
+        col.models.set_current(model)
+
+        for row in reader:
+            note = col.new_note(model)
+            note.guid = row[2]
+            note.mod = int(time.time())
+            note.fields[0] = row[2]  # UID
+            note.fields[1] = row[0]  # Q
+            note.fields[2] = row[1]  # A
+
+            card_type, significance = row[4], row[5]
+            if card_type == "kanji":
+                note.add_tag("KanTanJi_Kanji")
             else:
-                tags.append("KanTanJi_Learn_Future")
+                note.add_tag("KanTanJi_Tango")
+                tag_map = {0: "KanTanJi_Learn_Now", 1: "KanTanJi_Learn_Deck"}
+                note.add_tag(tag_map.get(significance, "KanTanJi_Learn_Future"))
 
-        # Create a note (card) with front and back content using the built-in model
-        note = genanki.Note(
-            model=kantanji_model,
-            fields=[question_html, answer_html],
-            guid=row[2],
-            tags=tags
+            col.add_note(note, deck_id)
+
+        # 4. Handle Media
+        if HANZIWRITER_LIB_PATH.exists():
+            # Use the absolute path to ensure Anki finds it during the temporary session
+            col.media.add_file(str(HANZIWRITER_LIB_PATH.absolute()))
+
+        options = ExportAnkiPackageOptions(
+            with_scheduling=True,
+            with_deck_configs=True,
+            with_media=True,
+            legacy=False
         )
 
-        # Add the note to the deck
-        deck.add_note(note)
-    if deck:
-        save_deck(filename, deck)
+        # Construct ExportLimit using deck_id
+        limit = ExportLimit(deck_id=deck_id)
+
+        col.export_anki_package(
+            out_path=str(Path(filename).absolute()),
+            options=options, limit=limit
+        )
+        # todo consider printing count
+
+    finally:
+        col.close()
+        # Small delay to ensure SQLite releases the file handle before deletion
+        time.sleep(0.1)
+        shutil.rmtree(temp_dir)
 
 
 def generate(key: str, data: dict, metadata: dict, folder_getter: Callable, is_debug_run: bool):
