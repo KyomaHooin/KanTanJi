@@ -348,13 +348,12 @@ HANZIWRITER_INIT_JS = r"""
    document.querySelectorAll('.qa').forEach(function(el){ el.style.display = 'none'; });
    document.querySelectorAll('.qa + br').forEach(function(el){ el.style.display='none'; });
    document.querySelectorAll('.qa + br + br').forEach(function(el){ el.style.display='none'; });
-  } catch(e) {console.error(e); }
+  } catch(e) { console.error(e); }
 
   var block = blocks[0];
   for (var i = 1; i < blocks.length; i++) {
    try { blocks[i].remove(); } catch(e) { console.error(e); }
   }
-  var idx = 0;
 
   (function(block, idx) {
    if (block.dataset.hwInited === '1') return;
@@ -372,64 +371,61 @@ HANZIWRITER_INIT_JS = r"""
    var saved = {};
    try { saved = safeJsonParse(localStorage.getItem(key) || '{}'); } catch(e) { console.error(e); }
 
+   function parseRgb(rgb) {
+    const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
+   }
+   function isDarkBg() {
+    const bg = getComputedStyle(document.body).backgroundColor || "";
+    const rgb = parseRgb(bg);
+    if (!rgb) return false;
+    const [r,g,b] = rgb;
+    const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
+    return lum < 0.5;
+   }
+   const dark = isDarkBg();
+   const palette = dark ? {
+    userInk: "#f2f2f2",
+    correctRed: "rgb(255, 80, 80)"
+   } : {
+    userInk: "#111111",
+    correctRed: "rgb(200, 0, 0)"
+   };
+
    var totalMistakes = saved && typeof saved.totalMistakes === 'number' ? saved.totalMistakes : null;
    status.textContent = totalMistakes === null ? 'Počet chyb neznámý.' : ('Výsledek ✓  Chyb: ' + totalMistakes);
+
    if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
     userEl.innerHTML = renderUserSvg(saved.drawn, palette.userInk);
    } else {
     userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
    }
 
-   function parseRgb(rgb) {
-    const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-    return m ? [parseInt(m[1],10), parseInt(m[2],10), parseInt(m[3],10)] : null;
-   }
-  function isDarkBg() {
-   const bg = getComputedStyle(document.body).backgroundColor || "";
-   const rgb = parseRgb(bg);
-   if (!rgb) return false;
-   const [r,g,b] = rgb;
-   const lum = (0.2126*r + 0.7152*g + 0.0722*b) / 255;
-   return lum < 0.5;
-  }
-  const dark = isDarkBg();
-  const palette = dark ? {
-   userInk: "#f2f2f2",
-   correctRed: "rgb(255, 80, 80)"
-  } : {
-   userInk: "#111111",
-   correctRed: "rgb(200, 0, 0)"
-  };
+   try { localStorage.removeItem(key); } catch(e) {}
 
-  if (saved && Array.isArray(saved.drawn) && saved.drawn.length > 0) {
-   userEl.innerHTML = renderUserSvg(saved.drawn, palette.userInk);
-  } else {
-   userEl.innerHTML = '<div style="color:gray;font-size:10pt;">Žádná kresba.</div>';
-  }
-  try { localStorage.removeItem(key); } catch(e) {}
-  var cid = 'hw-correct-' + idx + '-' + Math.floor(Math.random() * 1e9);
-  correctEl.setAttribute('id', cid);
-  correctEl.innerHTML = ''; // ensure empty
-  try {
-   var w = HanziWriter.create(cid, ch, {
-    width: 240,
-    height: 240,
-    padding: 10,
-    showOutline: false,
-    showCharacter: true,
-    strokeColor: palette.correctRed,
-    outlineColor: 'rgba(0,0,0,0)',
-    drawingColor: 'rgba(0,0,0,0)',
-    highlightColor: 'rgba(0,0,0,0)',
-    renderUserSvg: 80,
-    charDataLoader: function() { return charData; }
-   });
-   if (w && typeof w.showCharacter === 'function') w.showCharacter();
-  } catch(e) {
-   correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>'; console.error(e);
-  }
- })(block, idx);
-}
+   var cid = 'hw-correct-' + idx + '-' + Math.floor(Math.random() * 1e9);
+   correctEl.setAttribute('id', cid);
+   correctEl.innerHTML = ''; 
+   try {
+    var w = HanziWriter.create(cid, ch, {
+     width: 240,
+     height: 240,
+     padding: 10,
+     showOutline: false,
+     showCharacter: true,
+     strokeColor: palette.correctRed,
+     outlineColor: 'rgba(0,0,0,0)',
+     drawingColor: 'rgba(0,0,0,0)',
+     highlightColor: 'rgba(0,0,0,0)',
+     charDataLoader: function() { return charData; }
+    });
+    if (w && typeof w.showCharacter === 'function') w.showCharacter();
+   } catch(e) {
+    correctEl.innerHTML = '<div style="color:gray;font-size:10pt;">Nelze vykreslit.</div>'; 
+    console.error(e);
+   }
+  })(block, 0);
+ }
 
 function initAll() {
  if (typeof HanziWriter === 'undefined') {
@@ -447,6 +443,7 @@ setTimeout(initAll, 1);
 })();
 </script>
 """
+
 
 # Function to read the CSV data
 def read_kanji_csv(key, data):
@@ -628,7 +625,6 @@ def create_anki_deck(key, reader, filename):
         )
         col.models.add_template(model, template)
         model['css'] = css
-
 
         col.models.add(model)
         model['id'] = MODEL_ID
