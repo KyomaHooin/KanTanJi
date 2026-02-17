@@ -42,7 +42,7 @@ DataSet.register_processor("JSON Data Bundle", json.generate)
 def try_read_data(getter, message, output, success_read):
     if not success_read:
         try:
-            print(message)
+            print(message, end="")
             out = getter()
             return out, getter.__name__
         except FileNotFoundError:
